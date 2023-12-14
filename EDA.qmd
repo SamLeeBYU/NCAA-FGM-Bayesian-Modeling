@@ -1,0 +1,182 @@
+---
+title: "EDA"
+author: "Sam Lee"
+format: pdf
+editor: visual
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(invgamma)
+
+data_dir = "march-machine-learning-mania-2023/"
+```
+
+```{r echo=F, message=F}
+season_results = read_csv(str_c(data_dir, "MRegularSeasonDetailedResults.csv"))
+teams = read_csv(str_c(data_dir, "MTeams.csv"))
+tourney_results = read_csv(str_c(data_dir, "MNCAATourneyDetailedResults.csv"))
+
+transform_data = function(t){
+  t %>% pivot_longer(cols=c(WTeamID, LTeamID), names_to="WL", values_to = "TeamID") %>%
+  select(TeamID, WL, WScore, LScore, WFGM, WFGA, LFGM, LFGA) %>%
+  left_join(teams %>% select(TeamID, TeamName)) %>%
+  pivot_longer(cols=c(WScore, LScore), values_to = "Score", names_to = "WLScore") %>%
+  pivot_longer(cols=c(WFGM, LFGM), values_to="FGM", names_to = "WLFGM") %>%
+  pivot_longer(cols=c(WFGA, LFGA), values_to="FGA", names_to = "WLFGA") %>%
+  mutate(WL = sapply(WL, function(x)substr(x,1,1)),
+         WLScore = sapply(WLScore, function(x)substr(x,1,1)),
+         WLFGM = sapply(WLFGM, function(x)substr(x,1,1)),
+         WLFGA = sapply(WLFGA, function(x)substr(x,1,1))
+  ) %>% rowwise() %>%
+  filter(all(c(WL, WLScore, WLFGM, WLFGA) == 
+               first(c(WL, WLScore, WLFGM, WLFGA)))) %>%
+  select(TeamID, WL, TeamName, Score, FGM, FGA)
+}
+
+#2022 Season
+season.2022 <- season_results %>% 
+  filter(Season %in% 2022)
+
+season.2022 <- transform_data(season.2022)
+  
+season.2022 %>% mutate(
+    FGP = FGM/FGA
+  ) -> season.2022
+
+calculate_prior_fgp = function(p, beta=1){
+  #Returns alpha for a Beta(alpha, beta) such that alpha/(alpha+beta) = p (expected value)
+  return(p*beta/(1-p))
+}
+
+
+#Calculate priors for the field goal percentage ~ Beta(alpha, beta)
+#and for the field goal attemps ~ N(mu, sigma^2)
+season.2022 %>% group_by(TeamID, WL) %>%
+  summarize(
+    fgp.alpha.prior = calculate_prior_fgp(mean(FGP)),
+    fgp.beta.prior = 1,
+    fga.lambda.prior = mean(FGA),
+    fga.tau.prior = (max(FGA)-min(FGA))/3,
+    #Method of Moments https://arxiv.org/pdf/1605.01019.pdf
+    fga.gamma.prior = mean(FGA)^2/var(FGA)+2,
+    fga.phi.prior = mean(FGA)*(mean(FGA)^2/var(FGA)+1)
+  ) -> season.2022.priors
+
+#2023 Season we want to model
+season.2023 <- season_results %>% 
+  filter(Season %in% 2023)
+
+season.2023 <- transform_data(season.2023)
+
+#Calculate posteriors for FGP for the 2023 season
+season.2023.posteriors = season.2023 %>% left_join(season.2022.priors, by=join_by(TeamID, WL)) %>%
+  group_by(TeamID, WL) %>%
+  summarize (
+    fgp.alpha.posterior = sum(FGM)+first(fgp.alpha.prior),
+    fgp.beta.posterior = sum(FGA)-sum(FGM)+first(fgp.beta.prior),
+    fga.lambda.prior = first(fga.lambda.prior),
+    fga.tau.prior = first(fga.tau.prior),
+    fga.gamma.prior = first(fga.gamma.prior),
+    fga.phi.prior = first(fga.phi.prior)
+  )
+
+#Gibbs Sampling Method to Define Posterior
+posterior.matrix = as.matrix(season.2023.posteriors[c("fga.lambda.prior", "fga.tau.prior",                                          
+                                                      "fga.gamma.prior", "fga.phi.prior")])
+
+iterations = 10000
+
+#Matrices to store posterior distributions
+posterior.normal.matrix = matrix(ncol=iterations, nrow=nrow(posterior.matrix))
+posterior.invgamma.matrix = matrix(ncol=iterations, nrow=nrow(posterior.matrix))
+
+#Calculate the Normal posterior distribution for each ith team via Gibbs sampling
+for(i in 1:nrow(posterior.matrix)){
+  ith_team = posterior.matrix[i,]
+  data_i = season.2023[season.2023$TeamID == as.numeric(season.2023.posteriors[i,"TeamID"]) &
+                      season.2023$WL == as.character(season.2023.posteriors[i,"WL"]), "FGA"] %>%
+    unlist()
+  
+  #Gibbs sampling algorithm
+  burn = 100
+  iters <- iterations + burn
+  mu.save <- rep(0, iters)
+  mu.save <- ith_team["fga.lambda.prior"]
+  sigma2.save <- rep(0, iters)
+  sigma2 = ith_team["fga.phi.prior"]/(ith_team["fga.gamma.prior"]-1)
+  sigma2.save[1] = sigma2
+  
+  lambda = ith_team["fga.lambda.prior"]
+  tau = ith_team["fga.tau.prior"]
+  gamma = ith_team["fga.gamma.prior"]
+  phi = ith_team["fga.phi.prior"]
+  n = length(data_i)
+  
+  if(any(is.na(ith_team))){
+    posterior.normal.matrix[i,] = rep(NA_real_, iterations)
+    posterior.invgamma.matrix[i,] = rep(NA_real_, iterations)
+  } else {
+    for(t in 2:iters){
+      #Full conditional of mu
+      lambda.p <- (tau^2*sum(data_i) + sigma2*lambda)/(tau^2*n + sigma2)
+      tau2.p <- sigma2*tau^2/(tau^2*n + sigma2)
+      
+      #New value of mu
+      mu <- rnorm(1, lambda.p, sqrt(tau2.p))
+      mu.save[t] <- mu
+      
+      #Full conditional of sigma2
+      gamma.p <- gamma + length(data)/2
+      phi.p <- phi + sum((data_i - mu)^2)/2
+      
+      #New value of sigma2
+      sigma2 <- rinvgamma(1, gamma.p, phi.p)
+      sigma2.save[t] <- sigma2
+    }
+    
+    posterior.normal.matrix[i,] = mu.save[-(1:burn)]
+    posterior.invgamma.matrix[i,] = sigma2.save[-(1:burn)]
+  }
+  
+  #print(i)
+  
+}
+
+
+season.2023.posteriors$fga.lambda.posterior = rowMeans(posterior.normal.matrix)
+season.2023.posteriors$fga.tau.posterior = sqrt(rowMeans(posterior.invgamma.matrix))
+
+season.2023.posteriors %>% 
+  filter(!is.na(fga.lambda.posterior)) -> season.2023.posteriors
+
+#Monte Carlo Simulation to Simulate FGM
+posterior.fgm.matrix = matrix(ncol=iterations, nrow=nrow(season.2023.posteriors))
+for(i in 1:nrow(season.2023.posteriors)){
+  #Randomly sample from p from the posterior beta distribution on Field Goal Percentage
+  p = rbeta(iterations, as.numeric(season.2023.posteriors[i, "fgp.alpha.posterior"]), 
+            as.numeric(season.2023.posteriors[i, "fgp.beta.posterior"]))
+  #Calculate distribution of mean FGM by multiplying p by a random sample of FGA by team i
+  f = rnorm(iterations, as.numeric(season.2023.posteriors[i, "fga.lambda.posterior"]), 
+            as.numeric(season.2023.posteriors[i, "fga.tau.posterior"]))
+  
+  posterior.fgm.matrix[i,] = p*f
+}
+
+season.2023.posteriors$id = 1:nrow(season.2023.posteriors)
+#Create an nxn matrix to compare how team i's FGM will compare to team j's FGM
+combination.matrix = matrix(nrow=nrow(season.2023.posteriors), ncol=nrow(season.2023.posteriors))
+combination.significant.win.matrix =  matrix(nrow=nrow(season.2023.posteriors), ncol=nrow(season.2023.posteriors))
+for(i in 1:nrow(season.2023.posteriors)){
+  for(j in 1:nrow(season.2023.posteriors)){
+    if(as.numeric(season.2023.posteriors[i,"TeamID"]) != as.numeric(season.2023.posteriors[j,"TeamID"])){ #To avoid playing teams against each other
+      #Posterior Predictive Distribution to model FGM_i > FGM_j ~ Bernoulli(p_ij) for all i and j
+      combination.matrix[i,j] = mean(posterior.fgm.matrix[i,] > posterior.fgm.matrix[j,])
+      combination.significant.win.matrix[i,j] = quantile(posterior.fgm.matrix[i,]-posterior.fgm.matrix[j,], 0.05)[1] > 0
+    }
+  }
+}
+
+season.2023.posteriors$PosteriorScore = rowMeans(combination.matrix, na.rm=T)
+season.2023.posteriors$SignificantScore = rowSums(combination.significant.win.matrix, na.rm=T)
+```

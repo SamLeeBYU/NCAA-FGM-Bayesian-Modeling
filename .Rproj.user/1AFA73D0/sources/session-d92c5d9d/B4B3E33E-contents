@@ -1,0 +1,19 @@
+---
+title: "EDA"
+author: "Sam Lee"
+format: pdf
+editor: visual
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+
+data_dir = "march-machine-learning-mania-2023/"
+```
+
+
+```{r}
+season_results = read_csv(str_c(data_dir, "MRegularSeasonDetailedResults.csv"))
+teams = read_csv(str_c(data_dir, "MTeams.csv"))
+tourney_results = read_csv(str_c(data_dir, "MNCAATourneyDetailedResults.csv"))
+```

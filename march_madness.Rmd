@@ -1,0 +1,115 @@
+---
+title: "March Madness Brackets"
+author: "Aleena Eskeets and Sam Lee"
+date: "2023-11-10"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggplot2)
+library(grid)
+library(gridExtra)
+library(lattice)
+library(knitr)
+library(ggfortify)
+library(car)
+library(lmtest)
+library(corrplot)
+library(bestglm)
+library(glmnet)
+```
+
+# 1. Introduction
+
+
+
+One of the risks associated with every time a player attempts to score is losing possession of the ball during the rebound and giving the other team an advantage to score. Attempted Field Goals in basketball are just one of the ways to gauge how much a team is willing to risk in order to win a game. This leads us to question whether or not a team is more willing to attempt a shot in a high-stakes, single-elimination tournament, like March Madness, or in their regular season. 
+
+Given $\mu$, mean field goal attempts of the winning team, and $\sigma$, standard deviation of field goal attempts of the winning team, for the regular season and the NCAA Tournament for college basketball team, ds
+
+
+# 2. Methods
+
+The distribution we will use to model the data is a normal distribution. We suspect that the amount of field goals attempts are normally distributed, with the average attempts of field goals to be more focused around a center that become less frequent as you move further away from the average, as we have a sufficiently large sample size of NCAA and season games through out the years. 
+
+Let $\mu_N$ represent the average of attempts of field goal attempts during an NCAA Tournament and $\mu_S$ represent the average of attempts of field goal attempts during a regular season.
+
+Our prior distributions for both $\theta_{N}$ and $\theta_{S}$ will be a normal distribution with parameters, $\mu = 60$ and $\sigma = 3$. We will assume that $\mu = 60$  for our baseline as it seems like a relatively representative number (after researching average field goal attempts in a college basketball game) and assume a $\sigma = 3$ as we expect there to be little variation between scores. As we are unsure if there is a change in a team's willingness to play it safe during a tournament versus their season, we will assume that they are the same.
+
+```{r, echo=F}
+curve(dnorm(x, 60, 3), xlim=c(40, 80), 
+      ylab="Prior Density", 
+      main=expression("Prior Distributions for" ~ mu[N]~"and"~mu[S]), 
+      xlab=expression(mu))
+```
+
+Utilizing the data found from the following source:
+
+March Madness Learning Mania 2023 -  
+
+https://www.kaggle.com/competitions/march-machine-learning-mania-2023
+
+we will calculate our posterior distributions.
+```{r, message = F, echo = F}
+par(mfrow = c(1, 2))
+
+NCAAResults <- read_csv("march-machine-learning-mania-2023/MNCAATourneyDetailedResults.csv")
+NCAA <- NCAAResults %>% 
+  select(WFGA)
+NCAA <- as.data.frame(NCAA)
+summary(NCAA)
+
+SeasonResults <- read_csv("march-machine-learning-mania-2023/MRegularSeasonDetailedResults.csv")
+Season <- SeasonResults %>%
+  select(WFGA)
+Season <- as.data.frame(Season)
+summary(Season)
+```
+
+# 3. Results
+```{r,echo = F}
+# Prior Distribution
+mu_prior <- 60
+sigma2_prior <- 9
+
+# NCAA Field Goals
+n_N <- nrow(NCAA)
+sigma2_N <- var(NCAA)
+
+mu_N_post <- (sigma2_prior*sum(NCAA) + sigma2_N*mu_prior)/(n_N*sigma2_prior + sigma2_N)
+sigma2_N_post <- sigma2_N*sigma2_prior/(n_N*sigma2_prior + sigma2_N)
+
+# NCAA Posterior Distribution 
+curve(dnorm(x, mu_N_post, sqrt(sigma2_N_post)), xlim=c(54.5, 56.75), xlab=expression(mu[N]), ylab="Density", main="Posterior Distribution on \n Average Field Goal Attempts During the NCAA")
+
+# 95% confidence interval
+qnorm(c(.025, .975), mu_N_post, sqrt(sigma2_N_post))
+```
+
+The posterior distribution for $\mu_N$ is a normal distribution with the parameters, $\mu=55.59088$ and $\sigma^2=0.04137648$, N(55.59088, 0.04137648)$.
+
+We are 95% confident that the true average of attempted field goals for the NCAA Tournament falls in between 55.19220 and 55.98956 baskets.
+
+```{r, echo = F}
+# Regular Season Field Goals
+n_S <- nrow(Season)
+sigma2_S <- var(Season)
+
+mu_S_post <- (sigma2_prior*sum(Season) + sigma2_S*mu_prior)/(n_S*sigma2_prior + sigma2_S)
+sigma2_S_post <- sigma2_S*sigma2_prior/(n_S*sigma2_prior + sigma2_S)
+
+# Regular Season Posterior Distribution 
+curve(dnorm(x, mu_S_post, sqrt(sigma2_S_post)), xlim=c(55.45, 55.675), xlab=expression(mu[S]), ylab="Density", main="Posterior Distribution on \n Average Field Goal Attempts During the Season")
+
+# 95% confidence interval
+qnorm(c(.025, .975), mu_S_post, sqrt(sigma2_S_post))
+```
+
+The posterior distribution for $\mu_S$ is a normal distribution with the parameters, $\mu=55.55493$ and $\sigma^2=0.0005198604$, N(55.59088, 0.0005198604)$.
+
+We are 95% confident that the true average of attempted field goals for the NCAA Tournament falls in between 55.51024 and 55.59962 baskets.
+
+# 4. Conclusions
+
