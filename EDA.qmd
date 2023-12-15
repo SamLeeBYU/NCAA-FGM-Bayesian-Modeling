@@ -541,4 +541,6 @@ ggplot(p.kl, aes(x = Event, y = Probability, fill = Event)) +
   labs(title = "Predictive Posterior Bernoulli Distribution", x = "FGM of Gonzaga > FGM of Oral Roberts", y = "Probability") +
   scale_fill_manual(values = c("Predicted Win" = "steelblue", "Predicted Loss" = "coral"))+
   theme_minimal()
+
+plot(density(posterior.fgm.matrix[k,] - posterior.fgm.matrix[l,]), main="Posterior Distribution of Difference in FGM")
 ```
