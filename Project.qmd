@@ -384,7 +384,7 @@ Posterior Distributions for FGA for Each $k$th Team:
 
 $\mu_k|\text{Data}_k,\sigma^2_k \sim N(\lambda'_k, (\tau^2)_k') \quad \lambda'_k = \frac{\tau_k^2(\sum_{i=1}^{n_k}x_{ki})+\sigma_k^2\lambda_k}{\tau_k^2} \quad (\tau^2_k)'=\frac{\sigma_k^2\tau_k^2}{\tau_k^2n_k+\sigma_k^2}$
 
-$\sigma^2_k|\text{Data}_k,\mu_k ~ \text{InvGamma}(\gamma_k',\phi_k') \quad \gamma_k'=\gamma_k+\frac{n_k}{2} \quad \phi_k'=\frac{\phi_k=\sum_{i=1}^{n_k}(x_{ik}-\mu_k)}{2}$
+$\sigma^2_k|\text{Data}_k,\mu_k ~ \text{InvGamma}(\gamma_k',\phi_k') \quad \gamma_k'=\gamma_k+\frac{n_k}{2} \quad \phi_k'=\frac{\phi_k\sum_{i=1}^{n_k}(x_{ik}-\mu_k)}{2}$
 
 Joint Distribution of $(\mu_k, \sigma^2_k)$ Approximated with Gibbs Sampling (See [A.6](#a6) for plot code):
 
