@@ -9,6 +9,7 @@ editor: visual
 library(tidyverse)
 library(invgamma)
 library(ggplot2)
+library(gridExtra)
 
 set.seed(12142023)
 
@@ -520,8 +521,24 @@ ggplot(data = data.frame(x = c(0, 100)), aes(x)) +
 ```
 
 
-#### Posterior 
+#### Posterior Predictive Distribution on FGW
+
+$\text{FGM}_{k}|\text{Data}_k > \text{FGM}_l|\text{Data}_k \sim \text{Bernoulli}(p_{kl})$
 
 ```{r}
+k = 1211 #Gonzaga
+l = 1331 #Oral Robers
 
+k = which(season.2023.posteriors$TeamID == k)
+l = which(season.2023.posteriors$TeamID == l)
+
+p.kl = data.frame(Event = c("Predicted Win", "Predicted Loss"), 
+                  Probability = c(mean(posterior.fgm.matrix[k,] > posterior.fgm.matrix[l,]), 
+                                                         1 - mean(posterior.fgm.matrix[k,] > posterior.fgm.matrix[l,])))
+
+ggplot(p.kl, aes(x = Event, y = Probability, fill = Event)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Predictive Posterior Bernoulli Distribution", x = "FGM of Gonzaga > FGM of Oral Roberts", y = "Probability") +
+  scale_fill_manual(values = c("Predicted Win" = "steelblue", "Predicted Loss" = "coral"))+
+  theme_minimal()
 ```
