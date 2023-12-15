@@ -406,9 +406,11 @@ ggplot(data = data.frame(x = c(0, 1)), aes(x)) +
   theme_minimal() +
   labs(color = "Distribution") +
   scale_color_manual(
-    values = c("Gonzaga Prior" = "steelblue", "Oral Roberts Prior" = "coral")) +
+    values = c("Gonzaga" = "steelblue", "Oral Roberts" = "coral")) +
   theme(legend.position = "top")
 ```
+
+#### Field Goal Attempts
 
 $\text{FGA}_{k} \sim N(\lambda_{k}, \tau^2_{k})$
 
@@ -437,6 +439,41 @@ ggplot(data = data.frame(x = c(0, 100)), aes(x)) +
   theme_minimal() +
   labs(color = "Distribution") +
   scale_color_manual(
-    values = c("Gonzaga Prior" = "steelblue", "Oral Roberts Prior" = "coral")) +
+    values = c("Gonzaga" = "steelblue", "Oral Roberts" = "coral")) +
+  theme(legend.position = "top")
+```
+
+Posterior Distributions for Oral Roberts and Gonzaga
+
+#### Field Goal Percentage
+
+$\text{FGP}_k|\text{Data}_{k} \sim \text{Beta}(\alpha_k, \beta_k) \quad \forall k \in \text{Teams}$
+
+```{r}
+k.alpha = season.2023.posteriors %>% 
+  filter(TeamID == k) %>% pull(fgp.alpha.posterior)
+k.beta = season.2023.posteriors %>% 
+  filter(TeamID == k) %>% pull(fgp.beta.posterior)
+
+l.alpha = season.2023.posteriors %>% 
+  filter(TeamID == l) %>% pull(fgp.alpha.posterior)
+l.beta = season.2023.posteriors %>% 
+  filter(TeamID == l) %>% pull(fgp.beta.posterior)
+
+ggplot(data = data.frame(x = c(0.25, 0.75)), aes(x)) +
+  stat_function(fun = dbeta, n = 1001, 
+                args = list(shape1 = k.alpha, shape2 = k.beta),
+                aes(color = "Gonzaga Posterior"), 
+                show.legend=T) +
+  stat_function(fun = dbeta, n = 1001, 
+                args = list(shape1 = l.alpha, shape2 =l.beta), 
+                aes(color = "Oral Roberts Posterior"), show.legend=T) +
+  ylab(expression(pi(theta))) +
+  xlab(expression(theta)) +
+  ggtitle("Posterior Distributions") +
+  theme_minimal() +
+  labs(color = "Distribution") +
+  scale_color_manual(
+    values = c("Gonzaga" = "steelblue", "Oral Roberts" = "coral")) +
   theme(legend.position = "top")
 ```
