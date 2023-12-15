@@ -1,0 +1,808 @@
+---
+title: "Aleena Eskeets"
+subtitle: "Dec. 14, 2023"
+author: "Sam Lee and Aleena Eskeets"
+format: pdf
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(invgamma)
+set.seed(12142023)
+
+data_dir = "march-machine-learning-mania-2023/"
+```
+
+```{r echo=F, include=FALSE,message=F}
+season_results = read_csv(str_c(data_dir, "MRegularSeasonDetailedResults.csv"))
+teams = read_csv(str_c(data_dir, "MTeams.csv"))
+tourney_results = read_csv("2023 Game Data.csv")
+
+transform_data = function(t){
+  t %>% pivot_longer(cols=c(WTeamID, LTeamID), names_to="WL", values_to = "TeamID") %>%
+  select(TeamID, WL, WScore, LScore, WFGM, WFGA, LFGM, LFGA) %>%
+  left_join(teams %>% select(TeamID, TeamName)) %>%
+  pivot_longer(cols=c(WScore, LScore), values_to = "Score", names_to = "WLScore") %>%
+  pivot_longer(cols=c(WFGM, LFGM), values_to="FGM", names_to = "WLFGM") %>%
+  pivot_longer(cols=c(WFGA, LFGA), values_to="FGA", names_to = "WLFGA") %>%
+  mutate(WL = sapply(WL, function(x)substr(x,1,1)),
+         WLScore = sapply(WLScore, function(x)substr(x,1,1)),
+         WLFGM = sapply(WLFGM, function(x)substr(x,1,1)),
+         WLFGA = sapply(WLFGA, function(x)substr(x,1,1))
+  ) %>% rowwise() %>%
+  filter(all(c(WL, WLScore, WLFGM, WLFGA) == 
+               first(c(WL, WLScore, WLFGM, WLFGA)))) %>%
+  select(TeamID, WL, TeamName, Score, FGM, FGA)
+}
+
+#2022 Season
+season.2022 <- season_results %>% 
+  filter(Season %in% 2022)
+
+season.2022 <- transform_data(season.2022)
+  
+season.2022 %>% mutate(
+    FGP = FGM/FGA
+  ) -> season.2022
+
+calculate_prior_fgp = function(p, beta=1){
+  #Returns alpha for a Beta(alpha, beta) such that alpha/(alpha+beta) = p (expected value)
+  return(p*beta/(1-p))
+}
+
+
+#Calculate priors for the field goal percentage ~ Beta(alpha, beta)
+#and for the field goal attempts ~ N(mu, sigma^2)
+season.2022 %>% group_by(TeamID) %>%
+  summarize(
+    fgp.alpha.prior = calculate_prior_fgp(mean(FGP)),
+    fgp.beta.prior = 1,
+    fga.lambda.prior = mean(FGA),
+    fga.tau.prior = (max(FGA)-min(FGA))/3,
+    #Method of Moments https://arxiv.org/pdf/1605.01019.pdf
+    fga.gamma.prior = mean(FGA)^2/var(FGA)+2,
+    fga.phi.prior = mean(FGA)*(mean(FGA)^2/var(FGA)+1)
+  ) -> season.2022.priors
+
+#2023 Season we want to model
+season.2023 <- season_results %>% 
+  filter(Season %in% 2023)
+
+season.2023 <- transform_data(season.2023)
+
+#Calculate posteriors for FGP for the 2023 season
+season.2023.posteriors = season.2023 %>% left_join(season.2022.priors, by=join_by(TeamID)) %>%
+  group_by(TeamID) %>%
+  summarize (
+    fgp.alpha.posterior = sum(FGM)+first(fgp.alpha.prior),
+    fgp.beta.posterior = sum(FGA)-sum(FGM)+first(fgp.beta.prior),
+    fga.lambda.prior = first(fga.lambda.prior),
+    fga.tau.prior = first(fga.tau.prior),
+    fga.gamma.prior = first(fga.gamma.prior),
+    fga.phi.prior = first(fga.phi.prior)
+  )
+
+#Gibbs Sampling Method to Define Posterior
+posterior.matrix = as.matrix(season.2023.posteriors[c("fga.lambda.prior", "fga.tau.prior",                                          
+                                                      "fga.gamma.prior", "fga.phi.prior")])
+
+iterations = 10000
+
+#Matrices to store posterior distributions
+posterior.normal.matrix = matrix(ncol=iterations, nrow=nrow(posterior.matrix))
+posterior.invgamma.matrix = matrix(ncol=iterations, nrow=nrow(posterior.matrix))
+
+#Calculate the Normal posterior distribution for each ith team via Gibbs sampling
+for(i in 1:nrow(posterior.matrix)){
+  ith_team = posterior.matrix[i,]
+  data_i = season.2023[season.2023$TeamID == as.numeric(season.2023.posteriors[i,"TeamID"]), "FGA"] %>%
+    unlist()
+  
+  #Gibbs sampling algorithm
+  burn = 100
+  iters <- iterations + burn
+  mu.save <- rep(0, iters)
+  mu.save <- ith_team["fga.lambda.prior"]
+  sigma2.save <- rep(0, iters)
+  sigma2 = ith_team["fga.phi.prior"]/(ith_team["fga.gamma.prior"]-1)
+  sigma2.save[1] = sigma2
+  
+  lambda = ith_team["fga.lambda.prior"]
+  tau = ith_team["fga.tau.prior"]
+  gamma = ith_team["fga.gamma.prior"]
+  phi = ith_team["fga.phi.prior"]
+  n = length(data_i)
+  
+  if(any(is.na(ith_team))){
+    posterior.normal.matrix[i,] = rep(NA_real_, iterations)
+    posterior.invgamma.matrix[i,] = rep(NA_real_, iterations)
+  } else {
+    for(t in 2:iters){
+      #Full conditional of mu
+      lambda.p <- (tau^2*sum(data_i) + sigma2*lambda)/(tau^2*n + sigma2)
+      tau2.p <- sigma2*tau^2/(tau^2*n + sigma2)
+      
+      #New value of mu
+      mu <- rnorm(1, lambda.p, sqrt(tau2.p))
+      mu.save[t] <- mu
+      
+      #Full conditional of sigma2
+      gamma.p <- gamma + length(data)/2
+      phi.p <- phi + sum((data_i - mu)^2)/2
+      
+      #New value of sigma2
+      sigma2 <- rinvgamma(1, gamma.p, phi.p)
+      sigma2.save[t] <- sigma2
+    }
+    
+    posterior.normal.matrix[i,] = mu.save[-(1:burn)]
+    posterior.invgamma.matrix[i,] = sigma2.save[-(1:burn)]
+  }
+  
+  #print(i)
+  
+}
+
+
+season.2023.posteriors$fga.mu.posterior = rowMeans(posterior.normal.matrix)
+season.2023.posteriors$fga.sigma.posterior = sqrt(rowMeans(posterior.invgamma.matrix))
+
+season.2023.posteriors %>% 
+  filter(!is.na(fga.mu.posterior)) -> season.2023.posteriors
+
+#Monte Carlo Simulation to Simulate FGM
+posterior.fgm.matrix = matrix(ncol=iterations, nrow=nrow(season.2023.posteriors))
+for(i in 1:nrow(season.2023.posteriors)){
+  #Randomly sample from p from the posterior beta distribution on Field Goal Percentage
+  p = rbeta(iterations, as.numeric(season.2023.posteriors[i, "fgp.alpha.posterior"]), 
+            as.numeric(season.2023.posteriors[i, "fgp.beta.posterior"]))
+  #Calculate distribution of mean FGM by multiplying p by a random sample of FGA by team i
+  f = rnorm(iterations, as.numeric(season.2023.posteriors[i, "fga.mu.posterior"]), 
+            as.numeric(season.2023.posteriors[i, "fga.sigma.posterior"]))
+  
+  posterior.fgm.matrix[i,] = p*f
+}
+
+# season.2023.posteriors$id = 1:nrow(season.2023.posteriors)
+# #Create an nxn matrix to compare how team i's FGM will compare to team j's FGM
+# combination.matrix = matrix(nrow=nrow(season.2023.posteriors), ncol=nrow(season.2023.posteriors))
+# combination.significant.win.matrix =  matrix(nrow=nrow(season.2023.posteriors), ncol=nrow(season.2023.posteriors))
+# for(i in 1:nrow(season.2023.posteriors)){
+#   for(j in 1:nrow(season.2023.posteriors)){
+#     if(as.numeric(season.2023.posteriors[i,"TeamID"]) != as.numeric(season.2023.posteriors[j,"TeamID"])){ #To avoid playing teams against each other
+#       #Posterior Predictive Distribution to model FGM_i > FGM_j ~ Bernoulli(p_ij) for all i and j
+#       combination.matrix[i,j] = mean(posterior.fgm.matrix[i,] > posterior.fgm.matrix[j,])
+#       combination.significant.win.matrix[i,j] = quantile(posterior.fgm.matrix[i,]-posterior.fgm.matrix[j,], 0.05)[1] > 0
+#     }
+#   }
+# }
+# 
+# season.2023.posteriors$PosteriorScore = rowMeans(combination.matrix, na.rm=T)
+# season.2023.posteriors$SignificantScore = rowSums(combination.significant.win.matrix, na.rm=T)
+
+tourney_results[c("SEED", "TEAM...3")] %>% 
+  setNames(c("Seed", "TeamName")) -> tourney_results
+clean_team_names = function(t){
+  t$TeamName = sapply(t$TeamName, function(x){
+    x = x %>% str_replace("[.]", "")
+    x = x %>% str_replace("Florida", "FL")
+    if(x == "Saint Mary's")x = "St Mary's CA"
+    if(x == "College of Charleston")x = "Col Charleston"
+    if(x == "Louisiana Lafayette")x = "Lafayette"
+    if(x == "Fairleigh Dickinson")x = "F Dickinson"
+    if(x == "Northern Kentucky")x = "N Kentucky"
+    if(x == "Southeast Missouri St")x = "SE Missouri St"
+    if(x == "Texas A&M Corpus Chris")x = "TAM C. Christi"
+    if(x == "Texas Southern")x = "TX Southern"
+    if(x == "Montana St")x = "Montana St"
+    if(x == "Kennesaw St")x = "Kennesaw"
+    if(x == "Kent St")x = "Kent"
+    if(x == "North Carolina St")x = "NC State"
+    return(x)
+  })
+  return(t)
+}
+tourney_results = clean_team_names(tourney_results)
+
+tourney_results %>% 
+  left_join(teams[c("TeamID", "TeamName")]) -> tourney_results
+
+#Omit the first four
+tourney_results %>% 
+  filter(!TeamName %in% c("TX Southern", "Nevada",
+                          "Mississippi St", "SE Missouri St")) %>% distinct() -> tourney_results
+
+tourney_results$Region = rep(c("E", "S", "W", "M"), each=2, times=8)
+```
+
+## 1. Introduction
+
+The NCAA Men's Basketball tournament has been a well-known and highly anticipated sporting event since 1939 for not only the athletic aspects of the game, but also for the prediction of winning brackets. In the realm of sports analytics and statistical modeling, the question of replicating tournament outcomes has become an increasingly intriguing challenge. Although there are various covariates that contribute to whether a team wins or lose, we aim to utilize the Field Goal Attempts (FGA) data from the 2022 regular season to replicate the 2023 results of the tournament.
+
+## 2. Methods
+
+Ultimately, we are looking to answer the question:
+
+Given our observations from the 2022 season, can we calculate overall Field Goals Made (FGM) and can we use FGM to predict which team would win in a match?
+
+$\text{FGM}_{k} {|Data} > \text{FGM}_{l} {|Data}, \text{where } \textit{k } \text{and } \textit{l } \text{are teams, for all }\textit{k}\neq \textit{l.}$
+
+In order to calculate these conditionals, we set up the following equation:
+
+$\text{FGM}_{k} {|Data} = \text{Field Goals Attempted}_{k}{|Data} \times \text{Field Goal Percentage}_{k}{|Data}$
+
+We can use Bayesian Statistics to find the following conditionals:
+
+1.  Field Goals Attempted (FGA)
+
+    Upon looking at the 2022 regular season data, we observed the distribution of FGA to be approximately normal. Therefore, we will assume that FGA for 2023 is also normally distributed. Thus, to calculate FGA, we will have two unknown parameters, $\mu_k$ and $\sigma^2_k$ and will use Gibbs Sampling to approximate the following prior parameters from our 2022 regular season data:
+
+     1. $\mu_k \sim N(\lambda_k,\tau_k)$
+
+     2. $\sigma^2_{k} \sim InvGam(\gamma_k,\phi_k)$.
+
+    Then our likelihood would be $\text{FGA}_{ki} \sim N(\mu_k,\sigma^2_{k})$ and our posterior distribution is then $\text{FGA}_{k}|Data_k \sim N(\mu_k, \sigma^2_{k})$.
+
+    Of the 358 teams, we have chosen Gonzaga and Oral Robers to follow along as we conduct our analysis.
+
+    ```{r, echo=F}
+    k.lambda = season.2022.priors %>% 
+      filter(TeamID == k) %>% pull(fga.lambda.prior)
+    k.tau = season.2022.priors %>% 
+      filter(TeamID == k) %>% pull(fga.tau.prior)
+
+    l.lambda = season.2022.priors %>% 
+      filter(TeamID == l) %>% pull(fga.lambda.prior)
+    l.tau = season.2022.priors %>% 
+      filter(TeamID == l) %>% pull(fga.tau.prior)
+
+    ggplot(data = data.frame(x = c(0, 100)), aes(x)) +
+      stat_function(fun = dnorm, n = 1001, 
+                    args = list(mean = k.lambda, sd = k.tau),
+                    aes(color = "Gonzaga Prior"), 
+                    show.legend=T) +
+      stat_function(fun = dnorm, n = 1001, 
+                    args = list(mean = l.lambda, sd =l.tau), 
+                    aes(color = "Oral Roberts Prior"), show.legend=T) +
+      ylab(expression(pi(theta))) +
+      xlab(expression(theta)) +
+      ggtitle("Prior Distributions") +
+      theme_minimal() +
+      labs(color = "Distribution") +
+      scale_color_manual(
+        values = c("Gonzaga Prior" = "steelblue", "Oral Roberts Prior" = "coral")) +
+      theme(legend.position = "top")
+    ```
+
+2.  Field Goal Percentage (FGP)
+
+    FGP is a proportion calculated from FGA divided by FGM. Utlizing the 2022 regular season data, we modeled our prior distribution below:$\text{FGP}_{k} \sim Beta(\alpha_k,\beta_k)$ \
+    Then our likelihood is $\text{FGA}_{ki} \sim Binom(\theta_k)$, as we are modeling the idea that players either make the basket or do not. Then, as we have a binomial likelihood and a beta conjugate prior, we have a beta posterior distribution as follows: $\text{FGP}_{k}|Data_k \sim Beta(\alpha_k,\beta_k)$.
+
+    ```{r, echo=F}
+    k = 1211 #Gonzaga
+    l = 1331 #Oral Robers
+
+    k.alpha = season.2022.priors %>% 
+      filter(TeamID == k) %>% pull(fgp.alpha.prior)
+    k.beta = season.2022.priors %>% 
+      filter(TeamID == k) %>% pull(fgp.beta.prior)
+
+    l.alpha = season.2022.priors %>% 
+      filter(TeamID == l) %>% pull(fgp.alpha.prior)
+    l.beta = season.2022.priors %>% 
+      filter(TeamID == l) %>% pull(fgp.beta.prior)
+
+    ggplot(data = data.frame(x = c(0, 1)), aes(x)) +
+      stat_function(fun = dbeta, n = 1001, 
+                    args = list(shape1 = k.alpha, shape2 = k.beta),
+                    aes(color = "Gonzaga Prior"), 
+                    show.legend=T) +
+      stat_function(fun = dbeta, n = 1001, 
+                    args = list(shape1 = l.alpha, shape2 =l.beta), 
+                    aes(color = "Oral Roberts Prior"), show.legend=T) +
+      ylab(expression(pi(theta))) +
+      xlab(expression(theta)) +
+      ggtitle("Prior Distributions") +
+      theme_minimal() +
+      labs(color = "Distribution") +
+      scale_color_manual(
+        values = c("Gonzaga Prior" = "steelblue", "Oral Roberts Prior" = "coral")) +
+      theme(legend.position = "top")
+    ```
+
+## 3. Results
+
+1.  $\text{FGA}_{k}|Data_k \sim N(\mu_k, \sigma^2_{k})$
+
+```{r, echo=F}
+k = 1211 #Gonzaga
+l = 1331 #Oral Robers
+
+k = which(season.2023.posteriors$TeamID == k)
+l = which(season.2023.posteriors$TeamID == l)
+
+k.mu = mean(posterior.normal.matrix[k,])
+k.sigma = sqrt(mean(posterior.invgamma.matrix[k,]))
+
+l.mu = mean(posterior.normal.matrix[l,])
+l.sigma = sqrt(mean(posterior.invgamma.matrix[l,]))
+
+ggplot(data = data.frame(x = c(0, 100)), aes(x)) +
+  stat_function(fun = dnorm, n = 1001, 
+                args = list(mean = k.mu, sd = k.sigma),
+                aes(color = "Gonzaga"), 
+                show.legend=T) +
+  stat_function(fun = dnorm, n = 1001, 
+                args = list(mean = l.mu, sd =l.sigma), 
+                aes(color = "Oral Roberts"), show.legend=T) +
+  ylab(expression(pi(theta))) +
+  xlab(expression(theta)) +
+  ggtitle("Posterior Distributions") +
+  theme_minimal() +
+  labs(color = "Distribution") +
+  scale_color_manual(
+    values = c("Gonzaga" = "steelblue", "Oral Roberts" = "coral")) +
+  theme(legend.position = "top")
+```
+
+2.  $\text{FGP}_{k}|Data_k \sim Beta(\alpha_k,\beta_k)$
+
+```{r, echo=F, warning=F}
+k.alpha = season.2023.posteriors %>% 
+  filter(TeamID == k) %>% pull(fgp.alpha.posterior)
+k.beta = season.2023.posteriors %>% 
+  filter(TeamID == k) %>% pull(fgp.beta.posterior)
+
+l.alpha = season.2023.posteriors %>% 
+  filter(TeamID == l) %>% pull(fgp.alpha.posterior)
+l.beta = season.2023.posteriors %>% 
+  filter(TeamID == l) %>% pull(fgp.beta.posterior)
+
+ggplot(data = data.frame(x = c(0.25, 0.75)), aes(x)) +
+  stat_function(fun = dbeta, n = 1001, 
+                args = list(shape1 = k.alpha, shape2 = k.beta),
+                aes(color = "Gonzaga Posterior"), 
+                show.legend=T) +
+  stat_function(fun = dbeta, n = 1001, 
+                args = list(shape1 = l.alpha, shape2 =l.beta), 
+                aes(color = "Oral Roberts Posterior"), show.legend=T) +
+  ylab(expression(pi(theta))) +
+  xlab(expression(theta)) +
+  ggtitle("Posterior Distributions") +
+  theme_minimal() +
+  labs(color = "Distribution") +
+  scale_color_manual(
+    values = c("Gonzaga" = "steelblue", "Oral Roberts" = "coral")) +
+  theme(legend.position = "top")
+```
+
+## 4. Conclusions
+
+```{r, echo=F}
+k = 1211 #Gonzaga
+l = 1331 #Oral Robers
+
+k = which(season.2023.posteriors$TeamID == k)
+l = which(season.2023.posteriors$TeamID == l)
+
+p.kl = data.frame(Event = c("Predicted Win", "Predicted Loss"), 
+                  Probability = c(mean(posterior.fgm.matrix[k,] > posterior.fgm.matrix[l,]), 
+                                                         1 - mean(posterior.fgm.matrix[k,] > posterior.fgm.matrix[l,])))
+
+ggplot(p.kl, aes(x = Event, y = Probability, fill = Event)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Predictive Posterior Bernoulli Distribution", x = "FGM of Gonzaga > FGM of Oral Roberts", y = "Probability") +
+  scale_fill_manual(values = c("Predicted Win" = "steelblue", "Predicted Loss" = "coral"))+
+  theme_minimal()
+
+plot(density(posterior.fgm.matrix[k,] - posterior.fgm.matrix[l,]), main="Posterior Distribution of Difference in FGM")
+```
+
+## 5. Appendix
+
+### 5.1 Data
+
+```{r, message=F}
+season_results = read_csv(str_c(data_dir, "MRegularSeasonDetailedResults.csv"))
+teams = read_csv(str_c(data_dir, "MTeams.csv"))
+tourney_results = read_csv("2023 Game Data.csv")
+
+transform_data = function(t){
+  t %>% pivot_longer(cols=c(WTeamID, LTeamID), names_to="WL", values_to = "TeamID") %>%
+  select(TeamID, WL, WScore, LScore, WFGM, WFGA, LFGM, LFGA) %>%
+  left_join(teams %>% select(TeamID, TeamName)) %>%
+  pivot_longer(cols=c(WScore, LScore), values_to = "Score", names_to = "WLScore") %>%
+  pivot_longer(cols=c(WFGM, LFGM), values_to="FGM", names_to = "WLFGM") %>%
+  pivot_longer(cols=c(WFGA, LFGA), values_to="FGA", names_to = "WLFGA") %>%
+  mutate(WL = sapply(WL, function(x)substr(x,1,1)),
+         WLScore = sapply(WLScore, function(x)substr(x,1,1)),
+         WLFGM = sapply(WLFGM, function(x)substr(x,1,1)),
+         WLFGA = sapply(WLFGA, function(x)substr(x,1,1))
+  ) %>% rowwise() %>%
+  filter(all(c(WL, WLScore, WLFGM, WLFGA) == 
+               first(c(WL, WLScore, WLFGM, WLFGA)))) %>%
+  select(TeamID, WL, TeamName, Score, FGM, FGA)
+}
+
+#2022 Season
+season.2022 <- season_results %>% 
+  filter(Season %in% 2022)
+
+season.2022 <- transform_data(season.2022)
+  
+season.2022 %>% mutate(
+    FGP = FGM/FGA
+  ) -> season.2022
+
+calculate_prior_fgp = function(p, beta=1){
+  #Returns alpha for a Beta(alpha, beta) such that alpha/(alpha+beta) = p (expected value)
+  return(p*beta/(1-p))
+}
+
+
+#Calculate priors for the field goal percentage ~ Beta(alpha, beta)
+#and for the field goal attempts ~ N(mu, sigma^2)
+season.2022 %>% group_by(TeamID) %>%
+  summarize(
+    fgp.alpha.prior = calculate_prior_fgp(mean(FGP)),
+    fgp.beta.prior = 1,
+    fga.lambda.prior = mean(FGA),
+    fga.tau.prior = (max(FGA)-min(FGA))/3,
+    #Method of Moments https://arxiv.org/pdf/1605.01019.pdf
+    fga.gamma.prior = mean(FGA)^2/var(FGA)+2,
+    fga.phi.prior = mean(FGA)*(mean(FGA)^2/var(FGA)+1)
+  ) -> season.2022.priors
+
+#2023 Season we want to model
+season.2023 <- season_results %>% 
+  filter(Season %in% 2023)
+
+season.2023 <- transform_data(season.2023)
+
+#Calculate posteriors for FGP for the 2023 season
+season.2023.posteriors = season.2023 %>% left_join(season.2022.priors, by=join_by(TeamID)) %>%
+  group_by(TeamID) %>%
+  summarize (
+    fgp.alpha.posterior = sum(FGM)+first(fgp.alpha.prior),
+    fgp.beta.posterior = sum(FGA)-sum(FGM)+first(fgp.beta.prior),
+    fga.lambda.prior = first(fga.lambda.prior),
+    fga.tau.prior = first(fga.tau.prior),
+    fga.gamma.prior = first(fga.gamma.prior),
+    fga.phi.prior = first(fga.phi.prior)
+  )
+
+#Gibbs Sampling Method to Define Posterior
+posterior.matrix = as.matrix(season.2023.posteriors[c("fga.lambda.prior", "fga.tau.prior",                                          
+                                                      "fga.gamma.prior", "fga.phi.prior")])
+
+iterations = 10000
+
+#Matrices to store posterior distributions
+posterior.normal.matrix = matrix(ncol=iterations, nrow=nrow(posterior.matrix))
+posterior.invgamma.matrix = matrix(ncol=iterations, nrow=nrow(posterior.matrix))
+
+#Calculate the Normal posterior distribution for each ith team via Gibbs sampling
+for(i in 1:nrow(posterior.matrix)){
+  ith_team = posterior.matrix[i,]
+  data_i = season.2023[season.2023$TeamID == as.numeric(season.2023.posteriors[i,"TeamID"]), "FGA"] %>%
+    unlist()
+  
+  #Gibbs sampling algorithm
+  burn = 100
+  iters <- iterations + burn
+  mu.save <- rep(0, iters)
+  mu.save <- ith_team["fga.lambda.prior"]
+  sigma2.save <- rep(0, iters)
+  sigma2 = ith_team["fga.phi.prior"]/(ith_team["fga.gamma.prior"]-1)
+  sigma2.save[1] = sigma2
+  
+  lambda = ith_team["fga.lambda.prior"]
+  tau = ith_team["fga.tau.prior"]
+  gamma = ith_team["fga.gamma.prior"]
+  phi = ith_team["fga.phi.prior"]
+  n = length(data_i)
+  
+  if(any(is.na(ith_team))){
+    posterior.normal.matrix[i,] = rep(NA_real_, iterations)
+    posterior.invgamma.matrix[i,] = rep(NA_real_, iterations)
+  } else {
+    for(t in 2:iters){
+      #Full conditional of mu
+      lambda.p <- (tau^2*sum(data_i) + sigma2*lambda)/(tau^2*n + sigma2)
+      tau2.p <- sigma2*tau^2/(tau^2*n + sigma2)
+      
+      #New value of mu
+      mu <- rnorm(1, lambda.p, sqrt(tau2.p))
+      mu.save[t] <- mu
+      
+      #Full conditional of sigma2
+      gamma.p <- gamma + length(data)/2
+      phi.p <- phi + sum((data_i - mu)^2)/2
+      
+      #New value of sigma2
+      sigma2 <- rinvgamma(1, gamma.p, phi.p)
+      sigma2.save[t] <- sigma2
+    }
+    
+    posterior.normal.matrix[i,] = mu.save[-(1:burn)]
+    posterior.invgamma.matrix[i,] = sigma2.save[-(1:burn)]
+  }
+  
+  #print(i)
+  
+}
+
+
+season.2023.posteriors$fga.mu.posterior = rowMeans(posterior.normal.matrix)
+season.2023.posteriors$fga.sigma.posterior = sqrt(rowMeans(posterior.invgamma.matrix))
+
+season.2023.posteriors %>% 
+  filter(!is.na(fga.mu.posterior)) -> season.2023.posteriors
+
+#Monte Carlo Simulation to Simulate FGM
+posterior.fgm.matrix = matrix(ncol=iterations, nrow=nrow(season.2023.posteriors))
+for(i in 1:nrow(season.2023.posteriors)){
+  #Randomly sample from p from the posterior beta distribution on Field Goal Percentage
+  p = rbeta(iterations, as.numeric(season.2023.posteriors[i, "fgp.alpha.posterior"]), 
+            as.numeric(season.2023.posteriors[i, "fgp.beta.posterior"]))
+  #Calculate distribution of mean FGM by multiplying p by a random sample of FGA by team i
+  f = rnorm(iterations, as.numeric(season.2023.posteriors[i, "fga.mu.posterior"]), 
+            as.numeric(season.2023.posteriors[i, "fga.sigma.posterior"]))
+  
+  posterior.fgm.matrix[i,] = p*f
+}
+
+# season.2023.posteriors$id = 1:nrow(season.2023.posteriors)
+# #Create an nxn matrix to compare how team i's FGM will compare to team j's FGM
+# combination.matrix = matrix(nrow=nrow(season.2023.posteriors), ncol=nrow(season.2023.posteriors))
+# combination.significant.win.matrix =  matrix(nrow=nrow(season.2023.posteriors), ncol=nrow(season.2023.posteriors))
+# for(i in 1:nrow(season.2023.posteriors)){
+#   for(j in 1:nrow(season.2023.posteriors)){
+#     if(as.numeric(season.2023.posteriors[i,"TeamID"]) != as.numeric(season.2023.posteriors[j,"TeamID"])){ #To avoid playing teams against each other
+#       #Posterior Predictive Distribution to model FGM_i > FGM_j ~ Bernoulli(p_ij) for all i and j
+#       combination.matrix[i,j] = mean(posterior.fgm.matrix[i,] > posterior.fgm.matrix[j,])
+#       combination.significant.win.matrix[i,j] = quantile(posterior.fgm.matrix[i,]-posterior.fgm.matrix[j,], 0.05)[1] > 0
+#     }
+#   }
+# }
+# 
+# season.2023.posteriors$PosteriorScore = rowMeans(combination.matrix, na.rm=T)
+# season.2023.posteriors$SignificantScore = rowSums(combination.significant.win.matrix, na.rm=T)
+
+tourney_results[c("SEED", "TEAM...3")] %>% 
+  setNames(c("Seed", "TeamName")) -> tourney_results
+clean_team_names = function(t){
+  t$TeamName = sapply(t$TeamName, function(x){
+    x = x %>% str_replace("[.]", "")
+    x = x %>% str_replace("Florida", "FL")
+    if(x == "Saint Mary's")x = "St Mary's CA"
+    if(x == "College of Charleston")x = "Col Charleston"
+    if(x == "Louisiana Lafayette")x = "Lafayette"
+    if(x == "Fairleigh Dickinson")x = "F Dickinson"
+    if(x == "Northern Kentucky")x = "N Kentucky"
+    if(x == "Southeast Missouri St")x = "SE Missouri St"
+    if(x == "Texas A&M Corpus Chris")x = "TAM C. Christi"
+    if(x == "Texas Southern")x = "TX Southern"
+    if(x == "Montana St")x = "Montana St"
+    if(x == "Kennesaw St")x = "Kennesaw"
+    if(x == "Kent St")x = "Kent"
+    if(x == "North Carolina St")x = "NC State"
+    return(x)
+  })
+  return(t)
+}
+tourney_results = clean_team_names(tourney_results)
+
+tourney_results %>% 
+  left_join(teams[c("TeamID", "TeamName")]) -> tourney_results
+
+#Omit the first four
+tourney_results %>% 
+  filter(!TeamName %in% c("TX Southern", "Nevada",
+                          "Mississippi St", "SE Missouri St")) %>% distinct() -> tourney_results
+
+tourney_results$Region = rep(c("E", "S", "W", "M"), each=2, times=8)
+```
+
+### 5.3 Priors
+
+#### 5.3.1 FGA
+
+```{r}
+k.lambda = season.2022.priors %>% 
+  filter(TeamID == k) %>% pull(fga.lambda.prior)
+k.tau = season.2022.priors %>% 
+  filter(TeamID == k) %>% pull(fga.tau.prior)
+
+l.lambda = season.2022.priors %>% 
+  filter(TeamID == l) %>% pull(fga.lambda.prior)
+l.tau = season.2022.priors %>% 
+  filter(TeamID == l) %>% pull(fga.tau.prior)
+
+ggplot(data = data.frame(x = c(0, 100)), aes(x)) +
+  stat_function(fun = dnorm, n = 1001, 
+                args = list(mean = k.lambda, sd = k.tau),
+                aes(color = "Gonzaga Prior"), 
+                show.legend=T) +
+  stat_function(fun = dnorm, n = 1001, 
+                args = list(mean = l.lambda, sd =l.tau), 
+                aes(color = "Oral Roberts Prior"), show.legend=T) +
+  ylab(expression(pi(theta))) +
+  xlab(expression(theta)) +
+  ggtitle("Prior Distributions") +
+  theme_minimal() +
+  labs(color = "Distribution") +
+  scale_color_manual(
+    values = c("Gonzaga Prior" = "steelblue", "Oral Roberts Prior" = "coral")) +
+  theme(legend.position = "top")
+```
+
+#### 5.3.2 FGP
+
+```{r}
+k = 1211 #Gonzaga
+l = 1331 #Oral Robers
+
+k.alpha = season.2022.priors %>% 
+  filter(TeamID == k) %>% pull(fgp.alpha.prior)
+k.beta = season.2022.priors %>% 
+  filter(TeamID == k) %>% pull(fgp.beta.prior)
+
+l.alpha = season.2022.priors %>% 
+  filter(TeamID == l) %>% pull(fgp.alpha.prior)
+l.beta = season.2022.priors %>% 
+  filter(TeamID == l) %>% pull(fgp.beta.prior)
+
+ggplot(data = data.frame(x = c(0, 1)), aes(x)) +
+  stat_function(fun = dbeta, n = 1001, 
+                args = list(shape1 = k.alpha, shape2 = k.beta),
+                aes(color = "Gonzaga Prior"), 
+                show.legend=T) +
+  stat_function(fun = dbeta, n = 1001, 
+                args = list(shape1 = l.alpha, shape2 =l.beta), 
+                aes(color = "Oral Roberts Prior"), show.legend=T) +
+  ylab(expression(pi(theta))) +
+  xlab(expression(theta)) +
+  ggtitle("Prior Distributions") +
+  theme_minimal() +
+  labs(color = "Distribution") +
+  scale_color_manual(
+    values = c("Gonzaga Prior" = "steelblue", "Oral Roberts Prior" = "coral")) +
+  theme(legend.position = "top")
+```
+
+### 5.4 Posteriors
+
+#### 5.4.1 FGA
+
+```{r}
+k = 1211 #Gonzaga
+l = 1331 #Oral Robers
+
+k = which(season.2023.posteriors$TeamID == k)
+l = which(season.2023.posteriors$TeamID == l)
+
+k.mu = mean(posterior.normal.matrix[k,])
+k.sigma = sqrt(mean(posterior.invgamma.matrix[k,]))
+
+l.mu = mean(posterior.normal.matrix[l,])
+l.sigma = sqrt(mean(posterior.invgamma.matrix[l,]))
+
+ggplot(data = data.frame(x = c(0, 100)), aes(x)) +
+  stat_function(fun = dnorm, n = 1001, 
+                args = list(mean = k.mu, sd = k.sigma),
+                aes(color = "Gonzaga"), 
+                show.legend=T) +
+  stat_function(fun = dnorm, n = 1001, 
+                args = list(mean = l.mu, sd =l.sigma), 
+                aes(color = "Oral Roberts"), show.legend=T) +
+  ylab(expression(pi(theta))) +
+  xlab(expression(theta)) +
+  ggtitle("Posterior Distributions") +
+  theme_minimal() +
+  labs(color = "Distribution") +
+  scale_color_manual(
+    values = c("Gonzaga" = "steelblue", "Oral Roberts" = "coral")) +
+  theme(legend.position = "top")
+```
+
+#### 5.4.2 FGP
+
+```{r}
+k.alpha = season.2023.posteriors %>% 
+  filter(TeamID == k) %>% pull(fgp.alpha.posterior)
+k.beta = season.2023.posteriors %>% 
+  filter(TeamID == k) %>% pull(fgp.beta.posterior)
+
+l.alpha = season.2023.posteriors %>% 
+  filter(TeamID == l) %>% pull(fgp.alpha.posterior)
+l.beta = season.2023.posteriors %>% 
+  filter(TeamID == l) %>% pull(fgp.beta.posterior)
+
+ggplot(data = data.frame(x = c(0.25, 0.75)), aes(x)) +
+  stat_function(fun = dbeta, n = 1001, 
+                args = list(shape1 = k.alpha, shape2 = k.beta),
+                aes(color = "Gonzaga Posterior"), 
+                show.legend=T) +
+  stat_function(fun = dbeta, n = 1001, 
+                args = list(shape1 = l.alpha, shape2 =l.beta), 
+                aes(color = "Oral Roberts Posterior"), show.legend=T) +
+  ylab(expression(pi(theta))) +
+  xlab(expression(theta)) +
+  ggtitle("Posterior Distributions") +
+  theme_minimal() +
+  labs(color = "Distribution") +
+  scale_color_manual(
+    values = c("Gonzaga" = "steelblue", "Oral Roberts" = "coral")) +
+  theme(legend.position = "top")
+```
+
+### 5.5 2023 Tournament Simulation
+
+The column *p* indicates the predictive posterior probability of how likely that team was to make more field goals than their opposing team in the previous round.
+
+#### First Round Matchups
+
+```{r}
+tourney_results[c("Seed", "TeamName", "Region")] %>% knitr::kable()
+```
+
+#### Second Round Matchups
+
+```{r}
+matchups %>%
+  select(Seed, TeamName, Region, p, Round, Order) %>%
+  arrange(Round, Order) %>%
+  select(-Order) -> matchups
+
+matchups %>% 
+  filter(Round == 2) %>% 
+  select(-Round) %>%
+  knitr::kable()
+```
+
+#### Sweet 16
+
+```{r}
+matchups %>% 
+  filter(Round == 3) %>% 
+  select(-Round) %>%
+  knitr::kable()
+```
+
+#### Elite 8
+
+```{r}
+matchups %>% 
+  filter(Round == 4) %>% 
+  select(-Round) %>%
+  knitr::kable()
+```
+
+#### Final Four
+
+```{r}
+matchups %>% 
+  filter(Round == 5) %>% 
+  select(-Round) %>%
+  knitr::kable()
+```
+
+#### Championship
+
+```{r}
+matchups %>% 
+  filter(Round == 6) %>% 
+  select(-Round) %>%
+  knitr::kable()
+```
+
+#### Champion
+
+```{r}
+matchups %>% 
+  filter(Round == 7) %>% 
+  select(-Round) %>%
+  knitr::kable()
+```
