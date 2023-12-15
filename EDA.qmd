@@ -15,7 +15,7 @@ data_dir = "march-machine-learning-mania-2023/"
 ```{r echo=F, message=F}
 season_results = read_csv(str_c(data_dir, "MRegularSeasonDetailedResults.csv"))
 teams = read_csv(str_c(data_dir, "MTeams.csv"))
-tourney_results = read_csv(str_c(data_dir, "MNCAATourneyDetailedResults.csv"))
+tourney_results = read_csv("2023 Game Data.csv")
 
 transform_data = function(t){
   t %>% pivot_longer(cols=c(WTeamID, LTeamID), names_to="WL", values_to = "TeamID") %>%
@@ -51,8 +51,8 @@ calculate_prior_fgp = function(p, beta=1){
 
 
 #Calculate priors for the field goal percentage ~ Beta(alpha, beta)
-#and for the field goal attemps ~ N(mu, sigma^2)
-season.2022 %>% group_by(TeamID, WL) %>%
+#and for the field goal attempts ~ N(mu, sigma^2)
+season.2022 %>% group_by(TeamID) %>%
   summarize(
     fgp.alpha.prior = calculate_prior_fgp(mean(FGP)),
     fgp.beta.prior = 1,
@@ -70,8 +70,8 @@ season.2023 <- season_results %>%
 season.2023 <- transform_data(season.2023)
 
 #Calculate posteriors for FGP for the 2023 season
-season.2023.posteriors = season.2023 %>% left_join(season.2022.priors, by=join_by(TeamID, WL)) %>%
-  group_by(TeamID, WL) %>%
+season.2023.posteriors = season.2023 %>% left_join(season.2022.priors, by=join_by(TeamID)) %>%
+  group_by(TeamID) %>%
   summarize (
     fgp.alpha.posterior = sum(FGM)+first(fgp.alpha.prior),
     fgp.beta.posterior = sum(FGA)-sum(FGM)+first(fgp.beta.prior),
@@ -94,8 +94,7 @@ posterior.invgamma.matrix = matrix(ncol=iterations, nrow=nrow(posterior.matrix))
 #Calculate the Normal posterior distribution for each ith team via Gibbs sampling
 for(i in 1:nrow(posterior.matrix)){
   ith_team = posterior.matrix[i,]
-  data_i = season.2023[season.2023$TeamID == as.numeric(season.2023.posteriors[i,"TeamID"]) &
-                      season.2023$WL == as.character(season.2023.posteriors[i,"WL"]), "FGA"] %>%
+  data_i = season.2023[season.2023$TeamID == as.numeric(season.2023.posteriors[i,"TeamID"]), "FGA"] %>%
     unlist()
   
   #Gibbs sampling algorithm
@@ -144,11 +143,11 @@ for(i in 1:nrow(posterior.matrix)){
 }
 
 
-season.2023.posteriors$fga.lambda.posterior = rowMeans(posterior.normal.matrix)
-season.2023.posteriors$fga.tau.posterior = sqrt(rowMeans(posterior.invgamma.matrix))
+season.2023.posteriors$fga.mu.posterior = rowMeans(posterior.normal.matrix)
+season.2023.posteriors$fga.sigma.posterior = sqrt(rowMeans(posterior.invgamma.matrix))
 
 season.2023.posteriors %>% 
-  filter(!is.na(fga.lambda.posterior)) -> season.2023.posteriors
+  filter(!is.na(fga.mu.posterior)) -> season.2023.posteriors
 
 #Monte Carlo Simulation to Simulate FGM
 posterior.fgm.matrix = matrix(ncol=iterations, nrow=nrow(season.2023.posteriors))
@@ -157,26 +156,153 @@ for(i in 1:nrow(season.2023.posteriors)){
   p = rbeta(iterations, as.numeric(season.2023.posteriors[i, "fgp.alpha.posterior"]), 
             as.numeric(season.2023.posteriors[i, "fgp.beta.posterior"]))
   #Calculate distribution of mean FGM by multiplying p by a random sample of FGA by team i
-  f = rnorm(iterations, as.numeric(season.2023.posteriors[i, "fga.lambda.posterior"]), 
-            as.numeric(season.2023.posteriors[i, "fga.tau.posterior"]))
+  f = rnorm(iterations, as.numeric(season.2023.posteriors[i, "fga.mu.posterior"]), 
+            as.numeric(season.2023.posteriors[i, "fga.sigma.posterior"]))
   
   posterior.fgm.matrix[i,] = p*f
 }
 
-season.2023.posteriors$id = 1:nrow(season.2023.posteriors)
-#Create an nxn matrix to compare how team i's FGM will compare to team j's FGM
-combination.matrix = matrix(nrow=nrow(season.2023.posteriors), ncol=nrow(season.2023.posteriors))
-combination.significant.win.matrix =  matrix(nrow=nrow(season.2023.posteriors), ncol=nrow(season.2023.posteriors))
-for(i in 1:nrow(season.2023.posteriors)){
-  for(j in 1:nrow(season.2023.posteriors)){
-    if(as.numeric(season.2023.posteriors[i,"TeamID"]) != as.numeric(season.2023.posteriors[j,"TeamID"])){ #To avoid playing teams against each other
-      #Posterior Predictive Distribution to model FGM_i > FGM_j ~ Bernoulli(p_ij) for all i and j
-      combination.matrix[i,j] = mean(posterior.fgm.matrix[i,] > posterior.fgm.matrix[j,])
-      combination.significant.win.matrix[i,j] = quantile(posterior.fgm.matrix[i,]-posterior.fgm.matrix[j,], 0.05)[1] > 0
+# season.2023.posteriors$id = 1:nrow(season.2023.posteriors)
+# #Create an nxn matrix to compare how team i's FGM will compare to team j's FGM
+# combination.matrix = matrix(nrow=nrow(season.2023.posteriors), ncol=nrow(season.2023.posteriors))
+# combination.significant.win.matrix =  matrix(nrow=nrow(season.2023.posteriors), ncol=nrow(season.2023.posteriors))
+# for(i in 1:nrow(season.2023.posteriors)){
+#   for(j in 1:nrow(season.2023.posteriors)){
+#     if(as.numeric(season.2023.posteriors[i,"TeamID"]) != as.numeric(season.2023.posteriors[j,"TeamID"])){ #To avoid playing teams against each other
+#       #Posterior Predictive Distribution to model FGM_i > FGM_j ~ Bernoulli(p_ij) for all i and j
+#       combination.matrix[i,j] = mean(posterior.fgm.matrix[i,] > posterior.fgm.matrix[j,])
+#       combination.significant.win.matrix[i,j] = quantile(posterior.fgm.matrix[i,]-posterior.fgm.matrix[j,], 0.05)[1] > 0
+#     }
+#   }
+# }
+# 
+# season.2023.posteriors$PosteriorScore = rowMeans(combination.matrix, na.rm=T)
+# season.2023.posteriors$SignificantScore = rowSums(combination.significant.win.matrix, na.rm=T)
+
+tourney_results[c("SEED", "TEAM...3")] %>% 
+  setNames(c("Seed", "TeamName")) -> tourney_results
+clean_team_names = function(t){
+  t$TeamName = sapply(t$TeamName, function(x){
+    x = x %>% str_replace("[.]", "")
+    x = x %>% str_replace("Florida", "FL")
+    if(x == "Saint Mary's")x = "St Mary's CA"
+    if(x == "College of Charleston")x = "Col Charleston"
+    if(x == "Louisiana Lafayette")x = "Lafayette"
+    if(x == "Fairleigh Dickinson")x = "F Dickinson"
+    if(x == "Northern Kentucky")x = "N Kentucky"
+    if(x == "Southeast Missouri St")x = "SE Missouri St"
+    if(x == "Texas A&M Corpus Chris")x = "TAM C. Christi"
+    if(x == "Texas Southern")x = "TX Southern"
+    if(x == "Montana St")x = "Montana St"
+    if(x == "Kennesaw St")x = "Kennesaw"
+    if(x == "Kent St")x = "Kent"
+    if(x == "North Carolina St")x = "NC State"
+    return(x)
+  })
+  return(t)
+}
+tourney_results = clean_team_names(tourney_results)
+
+tourney_results %>% 
+  left_join(teams[c("TeamID", "TeamName")]) -> tourney_results
+
+#Omit the first four
+tourney_results %>% 
+  filter(!TeamName %in% c("TX Southern", "Nevada",
+                          "Mississippi St", "SE Missouri St")) %>% distinct() -> tourney_results
+
+tourney_results$Region = rep(c("E", "S", "W", "M"), each=2, times=8)
+```
+
+```{r}
+#2023 Tournament Simulation
+
+regions = c("E", "S", "W", "M")
+tourney_results %>% group_by(Region) %>%
+  mutate(
+    Order = rep(LETTERS[1:(n()/2)], each=2)
+  ) -> tourney_results
+
+matchups = tibble()
+
+compare_teams = function(k, l, alpha=0.25){
+  k = which(season.2023.posteriors$TeamID == k)
+  l = which(season.2023.posteriors$TeamID == l)
+  list(
+    p = mean(posterior.fgm.matrix[k,] > posterior.fgm.matrix[l,]),
+    q = quantile(posterior.fgm.matrix[k,] - posterior.fgm.matrix[l,], alpha)
+  )
+}
+
+tourney_results$Round = 1
+
+for(round in 1:4){
+ for(region in regions){
+    t = tourney_results
+    if(round > 1)t = matchups
+    
+    if(round < 5){
+      #These are all the regional matches
+      region.subset = t %>% 
+        filter(Region == region & Round == round) 
+    }
+    
+    region.subset$p = NA_real_
+    region.subset$alpha.probability = NA_real_
+    region.subset$Round = round+1
+    if(round > 1){
+      half = region.subset$Order[1:(length(region.subset$Order)/2)]
+      region.subset$Order = c(half, rev(half))
+    }
+    
+    region.subset %>% arrange(Order) -> region.subset
+    
+    #Loop through every game
+    i = 1
+    while(i < nrow(region.subset)){
+      p = compare_teams(region.subset[i,]$TeamID,
+                        region.subset[i+1,]$TeamID)[["p"]]
+      #Predictive probability distribution is a Bernoulli Distribution
+      if(p > (1-p)){
+        region.subset[i,]$p = p
+        region.subset[i,]$alpha.probability = compare_teams(region.subset[i,]$TeamID,
+                region.subset[i+1,]$TeamID)[["q"]] %>% as.vector() > 0
+        matchups = rbind(matchups, region.subset[i,])
+      } else {
+        region.subset[i+1,]$p = 1-p
+        region.subset[i+1,]$alpha.probability = compare_teams(region.subset[i+1,]$TeamID,
+                region.subset[i,]$TeamID)[["q"]] %>% as.vector() > 0
+        matchups = rbind(matchups, region.subset[i+1,])
+      }
+      i = i + 2
     }
   }
 }
 
-season.2023.posteriors$PosteriorScore = rowMeans(combination.matrix, na.rm=T)
-season.2023.posteriors$SignificantScore = rowSums(combination.significant.win.matrix, na.rm=T)
+#Final Four and Champtionship
+for(round in 5:6){
+  t.subset = matchups %>% 
+    filter(Round == round)
+  t.subset$Round = round+1
+  
+  #Loop through every game
+  i = 1
+  while(i < nrow(t.subset)){
+    p = compare_teams(t.subset[i,]$TeamID,
+                      t.subset[i+1,]$TeamID)[["p"]]
+    #Predictive probability distribution is a Bernoulli Distribution
+    if(p > (1-p)){
+      t.subset[i,]$p = p
+      t.subset[i,]$alpha.probability = compare_teams(t.subset[i,]$TeamID,
+              t.subset[i+1,]$TeamID)[["q"]] %>% as.vector() > 0      
+      matchups = rbind(matchups, t.subset[i,])
+    } else {
+      t.subset[i+1,]$p = 1-p
+      t.subset[i+1,]$alpha.probability = compare_teams(t.subset[i+1,]$TeamID,
+              t.subset[i,]$TeamID)[["q"]] %>% as.vector() > 0
+      matchups = rbind(matchups, t.subset[i+1,])
+    }
+    i = i + 2
+  }
+}
 ```
