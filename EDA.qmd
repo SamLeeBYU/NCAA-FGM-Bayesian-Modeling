@@ -401,8 +401,8 @@ ggplot(data = data.frame(x = c(0, 1)), aes(x)) +
   stat_function(fun = dbeta, n = 1001, 
                 args = list(shape1 = l.alpha, shape2 =l.beta), 
                 aes(color = "Oral Roberts"), show.legend=T) +
-  ylab(expression(pi(theta))) +
-  xlab(expression(theta)) +
+  ylab(expression(pi(FGP[k]))) +
+  xlab(expression(FGP[k])) +
   ggtitle("Prior Distributions") +
   theme_minimal() +
   labs(color = "Distribution") +
@@ -432,13 +432,13 @@ l.tau = season.2022.priors %>%
 ggplot(data = data.frame(x = c(0, 100)), aes(x)) +
   stat_function(fun = dnorm, n = 1001, 
                 args = list(mean = k.lambda, sd = k.tau),
-                aes(color = "Gonzaga Prior"), 
+                aes(color = "Gonzaga"), 
                 show.legend=T) +
   stat_function(fun = dnorm, n = 1001, 
                 args = list(mean = l.lambda, sd =l.tau), 
-                aes(color = "Oral Roberts Prior"), show.legend=T) +
-  ylab(expression(pi(theta))) +
-  xlab(expression(theta)) +
+                aes(color = "Oral Roberts"), show.legend=T) +
+  ylab(expression(pi(FGA[k]))) +
+  xlab(expression(FGA[k])) +
   ggtitle("Prior Distributions") +
   theme_minimal() +
   labs(color = "Distribution") +
@@ -475,8 +475,8 @@ ggplot(data = data.frame(x = c(0.25, 0.75)), aes(x)) +
   stat_function(fun = dbeta, n = 1001, 
                 args = list(shape1 = l.alpha, shape2 =l.beta), 
                 aes(color = "Oral Roberts"), show.legend=T) +
-  ylab(expression(pi(theta))) +
-  xlab(expression(theta)) +
+  ylab(expression(pi(FGP[k]))) +
+  xlab(expression(FGP[k])) +
   ggtitle("Posterior Distributions") +
   theme_minimal() +
   labs(color = "Distribution") +
@@ -495,11 +495,15 @@ Hence,
 
 $E(\text{FGP}_\text{Gonzaga}|\text{Data}_\text{Gonzaga})=0.522$
 
-$E(\text{FGP}_\text{Gonzaga}|\text{Data}_\text{Gonzaga})=0.476$
+$E(\text{FGP}_\text{Oral Roberts}|\text{Data}_\text{Oral Roberts})=0.476$
+
+$V(\text{FGP}_\text{Gonzaga}|\text{Data}_\text{Gonzaga})$=`r k.alpha*k.beta/((k.alpha+k.beta+1)*(k.alpha+k.beta)^2)`
+
+$V(\text{FGP}_\text{Oral Roberts}|\text{Data}_\text{Oral Roberts})$=`r l.alpha*l.beta/((l.alpha+l.beta+1)*(l.alpha+l.beta)^2)`
 
 #### Field Goal Attempts
 
-$\text{FGA}_{k}|\text{Data}_k \sim N(\mu_{k}, \sigma^2_{k})$
+$\text{FGA}_{k}|\text{Data}_k \sim N(\mu_{k}, \sigma^2_{k})$`
 
 ```{r}
 k = 1211 #Gonzaga
@@ -522,8 +526,8 @@ ggplot(data = data.frame(x = c(0, 100)), aes(x)) +
   stat_function(fun = dnorm, n = 1001, 
                 args = list(mean = l.mu, sd =l.sigma), 
                 aes(color = "Oral Roberts"), show.legend=T) +
-  ylab(expression(pi(theta))) +
-  xlab(expression(theta)) +
+  ylab(expression(pi(FGA[k]))) +
+  xlab(expression(FGA[k])) +
   ggtitle("Posterior Distributions") +
   theme_minimal() +
   labs(color = "Distribution") +
@@ -557,7 +561,24 @@ ggplot(p.kl, aes(x = Event, y = Probability, fill = Event)) +
   geom_bar(stat = "identity") +
   labs(title = "Predictive Posterior Bernoulli Distribution", x = "FGM of Gonzaga > FGM of Oral Roberts", y = "Probability") +
   scale_fill_manual(values = c("Predicted Win" = "steelblue", "Predicted Loss" = "coral"))+
-  theme_minimal()
+  theme_minimal()+
+  theme(legend.position = "none")
 
 plot(density(posterior.fgm.matrix[k,] - posterior.fgm.matrix[l,]), main="Posterior Distribution of Difference in FGM")
 ```
+
+If we assume that the FGA is independent of FGP, then,
+
+$E(\text{FGM}_\text{Gonzaga}|\text{Data}_\text{Gonzaga})=E(\text{FGP}_\text{Gonzaga}|\text{Data}_\text{Gonzaga})E(\text{FGA}_\text{Gonzaga}|\text{Data}_\text{Gonzaga})$ =`r (k.alpha/(k.alpha+k.beta))*k.mu`
+
+$E(\text{FGM}_\text{Oral Roberts}|\text{Data}_\text{Oral Roberts})=E(\text{FGP}_\text{Oral Roberts}|\text{Data}_\text{Oral Roberts})E(\text{FGA}_\text{Oral Roberts}|\text{Data}_\text{Roberts})$ =`r (l.alpha/(l.alpha+l.beta))*l.mu`
+
+Hence, 
+
+$E(\text{FGM}_\text{Gonzaga}|\text{Data}_\text{Gonzaga}-\text{FGM}_\text{Oral Roberts}|\text{Data}_\text{Oral Roberts})$=$E(\text{FGM}_\text{Gonzaga}|\text{Data}_\text{Gonzaga})-E(\text{FGM}_\text{Oral Roberts}|\text{Data}_\text{Oral Roberts})$=`r (k.alpha/(k.alpha+k.beta))*k.mu-(l.alpha/(l.alpha+l.beta))*l.mu`
+
+Where the expected values from FGA were approximated using Gibbs sampling techniques.
+
+Our estimated posterior predictive mean using Monte Carlo Approximation is `r mean(posterior.fgm.matrix[k,] - posterior.fgm.matrix[l,])`.
+
+Our estimated posterior predictive variance using Monte Carlo Approximation is `r var(posterior.fgm.matrix[k,] - posterior.fgm.matrix[l,])`
