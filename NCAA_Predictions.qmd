@@ -274,7 +274,7 @@ We can use Bayesian Statistics to find the following conditionals:
       theme(legend.position = "top")
     ```
 
-2.  Field Goal Percentage (FGP)
+2. Field Goal Percentage (FGP)
 
     FGP is a proportion calculated from FGA divided by FGM. Utlizing the 2022 regular season data, we modeled our prior distribution below:$\text{FGP}_{k} \sim Beta(\alpha_k,\beta_k)$ \
     Then our likelihood is $\text{FGA}_{ki} \sim Binom(\theta_k)$, as we are modeling the idea that players either make the basket or do not. Then, as we have a binomial likelihood and a beta conjugate prior, we have a beta posterior distribution as follows: $\text{FGP}_{k}|Data_k \sim Beta(\alpha_k,\beta_k)$.
@@ -310,6 +310,7 @@ We can use Bayesian Statistics to find the following conditionals:
         values = c("Gonzaga Prior" = "steelblue", "Oral Roberts Prior" = "coral")) +
       theme(legend.position = "top")
     ```
+
 
 ## 3. Results
 

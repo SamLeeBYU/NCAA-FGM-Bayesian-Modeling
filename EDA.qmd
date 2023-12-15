@@ -160,8 +160,7 @@ for(i in 1:nrow(season.2023.posteriors)){
   p = rbeta(iterations, as.numeric(season.2023.posteriors[i, "fgp.alpha.posterior"]), 
             as.numeric(season.2023.posteriors[i, "fgp.beta.posterior"]))
   #Calculate distribution of mean FGM by multiplying p by a random sample of FGA by team i
-  f = rnorm(iterations, as.numeric(season.2023.posteriors[i, "fga.mu.posterior"]), 
-            as.numeric(season.2023.posteriors[i, "fga.sigma.posterior"]))
+  f = rnorm(iterations, posterior.normal.matrix[i,], sqrt(posterior.invgamma.matrix[i,]))
   
   posterior.fgm.matrix[i,] = p*f
 }
@@ -542,7 +541,7 @@ $\text{FGA}_\text{Gonzaga}|\text{Data}_{\text{Gonzaga}} \sim N(61.37, 8.45^2)$
 
 $\text{FGA}_\text{Oral Roberts}|\text{Data}_{\text{Oral Roberts}} \sim N(62.86, 8.44^2)$
 
-#### Posterior Predictive Distribution on FGW
+#### Posterior Predictive Distribution on FGM
 
 $\text{FGM}_{k}|\text{Data}_k > \text{FGM}_l|\text{Data}_k \sim \text{Bernoulli}(p_{kl})$
 
@@ -582,3 +581,11 @@ Where the expected values from FGA were approximated using Gibbs sampling techni
 Our estimated posterior predictive mean using Monte Carlo Approximation is `r mean(posterior.fgm.matrix[k,] - posterior.fgm.matrix[l,])`.
 
 Our estimated posterior predictive variance using Monte Carlo Approximation is `r var(posterior.fgm.matrix[k,] - posterior.fgm.matrix[l,])`
+
+#### 95% Credible Interval for Difference in FGM
+
+```{r echo=F}
+quantile(posterior.fgm.matrix[k,] - posterior.fgm.matrix[l,], c(0.025, 0.975))
+```
+
+Given our data and prior knowledge, the there is a 95% probability that the difference in FGM between Gonzaga and Oral Roberts will be between -9.84 and 14.
