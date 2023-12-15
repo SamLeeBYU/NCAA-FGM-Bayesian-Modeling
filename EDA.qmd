@@ -415,6 +415,9 @@ ggplot(data = data.frame(x = c(0, 1)), aes(x)) +
 $\text{FGA}_{k} \sim N(\lambda_{k}, \tau^2_{k})$
 
 ```{r}
+k = 1211 #Gonzaga
+l = 1331 #Oral Robers
+
 k.lambda = season.2022.priors %>% 
   filter(TeamID == k) %>% pull(fga.lambda.prior)
 k.tau = season.2022.priors %>% 
@@ -450,6 +453,9 @@ Posterior Distributions for Oral Roberts and Gonzaga
 $\text{FGP}_k|\text{Data}_{k} \sim \text{Beta}(\alpha_k, \beta_k) \quad \forall k \in \text{Teams}$
 
 ```{r}
+k = 1211 #Gonzaga
+l = 1331 #Oral Robers
+
 k.alpha = season.2023.posteriors %>% 
   filter(TeamID == k) %>% pull(fgp.alpha.posterior)
 k.beta = season.2023.posteriors %>% 
@@ -463,11 +469,11 @@ l.beta = season.2023.posteriors %>%
 ggplot(data = data.frame(x = c(0.25, 0.75)), aes(x)) +
   stat_function(fun = dbeta, n = 1001, 
                 args = list(shape1 = k.alpha, shape2 = k.beta),
-                aes(color = "Gonzaga Posterior"), 
+                aes(color = "Gonzaga"), 
                 show.legend=T) +
   stat_function(fun = dbeta, n = 1001, 
                 args = list(shape1 = l.alpha, shape2 =l.beta), 
-                aes(color = "Oral Roberts Posterior"), show.legend=T) +
+                aes(color = "Oral Roberts"), show.legend=T) +
   ylab(expression(pi(theta))) +
   xlab(expression(theta)) +
   ggtitle("Posterior Distributions") +
@@ -476,4 +482,46 @@ ggplot(data = data.frame(x = c(0.25, 0.75)), aes(x)) +
   scale_color_manual(
     values = c("Gonzaga" = "steelblue", "Oral Roberts" = "coral")) +
   theme(legend.position = "top")
+```
+
+#### Field Goal Attempts
+
+$\text{FGA}_{k}|\text{Data}_k \sim N(\mu_{k}, \sigma^2_{k})$
+
+```{r}
+k = 1211 #Gonzaga
+l = 1331 #Oral Robers
+
+k = which(season.2023.posteriors$TeamID == k)
+l = which(season.2023.posteriors$TeamID == l)
+
+k.mu = mean(posterior.normal.matrix[k,])
+k.sigma = sqrt(mean(posterior.invgamma.matrix[k,]))
+
+l.mu = mean(posterior.normal.matrix[l,])
+l.sigma = sqrt(mean(posterior.invgamma.matrix[l,]))
+
+ggplot(data = data.frame(x = c(0, 100)), aes(x)) +
+  stat_function(fun = dnorm, n = 1001, 
+                args = list(mean = k.mu, sd = k.sigma),
+                aes(color = "Gonzaga"), 
+                show.legend=T) +
+  stat_function(fun = dnorm, n = 1001, 
+                args = list(mean = l.mu, sd =l.sigma), 
+                aes(color = "Oral Roberts"), show.legend=T) +
+  ylab(expression(pi(theta))) +
+  xlab(expression(theta)) +
+  ggtitle("Posterior Distributions") +
+  theme_minimal() +
+  labs(color = "Distribution") +
+  scale_color_manual(
+    values = c("Gonzaga" = "steelblue", "Oral Roberts" = "coral")) +
+  theme(legend.position = "top")
+```
+
+
+#### Posterior 
+
+```{r}
+
 ```
