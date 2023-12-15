@@ -372,4 +372,71 @@ matchups %>%
   knitr::kable()
 ```
 
+Prior Distributions for Oral Roberts and Gonzaga
 
+#### Field Goal Percentage
+
+$\text{FGP}_k \sim \text{Beta}(\alpha_k, \beta_k) \quad \forall k \in \text{Teams}$
+
+```{r}
+k = 1211 #Gonzaga
+l = 1331 #Oral Robers
+
+k.alpha = season.2022.priors %>% 
+  filter(TeamID == k) %>% pull(fgp.alpha.prior)
+k.beta = season.2022.priors %>% 
+  filter(TeamID == k) %>% pull(fgp.beta.prior)
+
+l.alpha = season.2022.priors %>% 
+  filter(TeamID == l) %>% pull(fgp.alpha.prior)
+l.beta = season.2022.priors %>% 
+  filter(TeamID == l) %>% pull(fgp.beta.prior)
+
+ggplot(data = data.frame(x = c(0, 1)), aes(x)) +
+  stat_function(fun = dbeta, n = 1001, 
+                args = list(shape1 = k.alpha, shape2 = k.beta),
+                aes(color = "Gonzaga Prior"), 
+                show.legend=T) +
+  stat_function(fun = dbeta, n = 1001, 
+                args = list(shape1 = l.alpha, shape2 =l.beta), 
+                aes(color = "Oral Roberts Prior"), show.legend=T) +
+  ylab(expression(pi(theta))) +
+  xlab(expression(theta)) +
+  ggtitle("Prior Distributions") +
+  theme_minimal() +
+  labs(color = "Distribution") +
+  scale_color_manual(
+    values = c("Gonzaga Prior" = "steelblue", "Oral Roberts Prior" = "coral")) +
+  theme(legend.position = "top")
+```
+
+$\text{FGA}_{k} \sim N(\lambda_{k}, \tau^2_{k})$
+
+```{r}
+k.lambda = season.2022.priors %>% 
+  filter(TeamID == k) %>% pull(fga.lambda.prior)
+k.tau = season.2022.priors %>% 
+  filter(TeamID == k) %>% pull(fga.tau.prior)
+
+l.lambda = season.2022.priors %>% 
+  filter(TeamID == l) %>% pull(fga.lambda.prior)
+l.tau = season.2022.priors %>% 
+  filter(TeamID == l) %>% pull(fga.tau.prior)
+
+ggplot(data = data.frame(x = c(0, 100)), aes(x)) +
+  stat_function(fun = dnorm, n = 1001, 
+                args = list(mean = k.lambda, sd = k.tau),
+                aes(color = "Gonzaga Prior"), 
+                show.legend=T) +
+  stat_function(fun = dnorm, n = 1001, 
+                args = list(mean = l.lambda, sd =l.tau), 
+                aes(color = "Oral Roberts Prior"), show.legend=T) +
+  ylab(expression(pi(theta))) +
+  xlab(expression(theta)) +
+  ggtitle("Prior Distributions") +
+  theme_minimal() +
+  labs(color = "Distribution") +
+  scale_color_manual(
+    values = c("Gonzaga Prior" = "steelblue", "Oral Roberts Prior" = "coral")) +
+  theme(legend.position = "top")
+```
