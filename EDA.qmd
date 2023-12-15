@@ -8,11 +8,14 @@ editor: visual
 ```{r setup, include=FALSE}
 library(tidyverse)
 library(invgamma)
+library(ggplot2)
+
+set.seed(12142023)
 
 data_dir = "march-machine-learning-mania-2023/"
 ```
 
-```{r echo=F, message=F}
+```{r message=F}
 season_results = read_csv(str_c(data_dir, "MRegularSeasonDetailedResults.csv"))
 teams = read_csv(str_c(data_dir, "MTeams.csv"))
 tourney_results = read_csv("2023 Game Data.csv")
@@ -162,23 +165,6 @@ for(i in 1:nrow(season.2023.posteriors)){
   posterior.fgm.matrix[i,] = p*f
 }
 
-# season.2023.posteriors$id = 1:nrow(season.2023.posteriors)
-# #Create an nxn matrix to compare how team i's FGM will compare to team j's FGM
-# combination.matrix = matrix(nrow=nrow(season.2023.posteriors), ncol=nrow(season.2023.posteriors))
-# combination.significant.win.matrix =  matrix(nrow=nrow(season.2023.posteriors), ncol=nrow(season.2023.posteriors))
-# for(i in 1:nrow(season.2023.posteriors)){
-#   for(j in 1:nrow(season.2023.posteriors)){
-#     if(as.numeric(season.2023.posteriors[i,"TeamID"]) != as.numeric(season.2023.posteriors[j,"TeamID"])){ #To avoid playing teams against each other
-#       #Posterior Predictive Distribution to model FGM_i > FGM_j ~ Bernoulli(p_ij) for all i and j
-#       combination.matrix[i,j] = mean(posterior.fgm.matrix[i,] > posterior.fgm.matrix[j,])
-#       combination.significant.win.matrix[i,j] = quantile(posterior.fgm.matrix[i,]-posterior.fgm.matrix[j,], 0.05)[1] > 0
-#     }
-#   }
-# }
-# 
-# season.2023.posteriors$PosteriorScore = rowMeans(combination.matrix, na.rm=T)
-# season.2023.posteriors$SignificantScore = rowSums(combination.significant.win.matrix, na.rm=T)
-
 tourney_results[c("SEED", "TEAM...3")] %>% 
   setNames(c("Seed", "TeamName")) -> tourney_results
 clean_team_names = function(t){
@@ -209,7 +195,8 @@ tourney_results %>%
 #Omit the first four
 tourney_results %>% 
   filter(!TeamName %in% c("TX Southern", "Nevada",
-                          "Mississippi St", "SE Missouri St")) %>% distinct() -> tourney_results
+                          "Mississippi St", "SE Missouri St")) %>% 
+  distinct() -> tourney_results
 
 tourney_results$Region = rep(c("E", "S", "W", "M"), each=2, times=8)
 ```
@@ -253,9 +240,14 @@ for(round in 1:4){
     if(round > 1){
       half = region.subset$Order[1:(length(region.subset$Order)/2)]
       region.subset$Order = c(half, rev(half))
+      
+      matchups[matchups$Region == region & matchups$Round == round,
+               ]$Order =c(half, rev(half))
     }
     
-    region.subset %>% arrange(Order) -> region.subset
+    
+    region.subset %>% 
+      arrange(Order) -> region.subset
     
     #Loop through every game
     i = 1
@@ -265,12 +257,14 @@ for(round in 1:4){
       #Predictive probability distribution is a Bernoulli Distribution
       if(p > (1-p)){
         region.subset[i,]$p = p
-        region.subset[i,]$alpha.probability = compare_teams(region.subset[i,]$TeamID,
+        region.subset[i,]$alpha.probability = 
+          compare_teams(region.subset[i,]$TeamID,
                 region.subset[i+1,]$TeamID)[["q"]] %>% as.vector() > 0
         matchups = rbind(matchups, region.subset[i,])
       } else {
         region.subset[i+1,]$p = 1-p
-        region.subset[i+1,]$alpha.probability = compare_teams(region.subset[i+1,]$TeamID,
+        region.subset[i+1,]$alpha.probability = 
+          compare_teams(region.subset[i+1,]$TeamID,
                 region.subset[i,]$TeamID)[["q"]] %>% as.vector() > 0
         matchups = rbind(matchups, region.subset[i+1,])
       }
@@ -305,4 +299,77 @@ for(round in 5:6){
     i = i + 2
   }
 }
+
 ```
+
+
+## 2023 Tournament Simulation
+
+The column *p* indicates the predictive posterior probability of how likely that team was to make more field goals than their opposing team in the previous round.
+
+#### First Round Matchups
+
+```{r echo=F}
+tourney_results[c("Seed", "TeamName", "Region")] %>% knitr::kable()
+```
+
+#### Second Round Matchups
+
+```{r echo=F}
+matchups %>%
+  select(Seed, TeamName, Region, p, Round, Order) %>%
+  arrange(Round, Order) %>%
+  select(-Order) -> matchups
+
+matchups %>% 
+  filter(Round == 2) %>% 
+  select(-Round) %>%
+  knitr::kable()
+```
+
+#### Sweet 16
+
+```{r echo=F}
+matchups %>% 
+  filter(Round == 3) %>% 
+  select(-Round) %>%
+  knitr::kable()
+```
+
+#### Elite 8
+
+```{r echo=F}
+matchups %>% 
+  filter(Round == 4) %>% 
+  select(-Round) %>%
+  knitr::kable()
+```
+
+#### Final Four
+
+```{r echo=F}
+matchups %>% 
+  filter(Round == 5) %>% 
+  select(-Round) %>%
+  knitr::kable()
+```
+
+#### Championship
+
+```{r echo=F}
+matchups %>% 
+  filter(Round == 6) %>% 
+  select(-Round) %>%
+  knitr::kable()
+```
+
+#### Champion
+
+```{r echo=F}
+matchups %>% 
+  filter(Round == 7) %>% 
+  select(-Round) %>%
+  knitr::kable()
+```
+
+
